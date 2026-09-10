@@ -1,0 +1,188 @@
+name: Deploy AR site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore final AR source package
+        if: ${{ hashFiles('package.json') == '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat payload_xz/site.part*.b64 | base64 --decode > /tmp/ar-site.tar.xz
+          mkdir -p /tmp/ar-site
+          tar -xJf /tmp/ar-site.tar.xz -C /tmp/ar-site
+          rsync -a /tmp/ar-site/ ./ \
+            --exclude='.github' \
+            --exclude='payload_xz' \
+            --exclude='bootstrap' \
+            --exclude='bootstrap_min'
+          rm -rf bootstrap bootstrap_min payload_xz
+
+          mkdir -p scripts public
+
+          cat > scripts/patch-rollup.cjs <<'EOF'
+          const fs = require("fs");
+          const path = require("path");
+
+          const nativePath = path.join(__dirname, "../node_modules/rollup/dist/native.js");
+          if (fs.existsSync(nativePath)) {
+            let content = fs.readFileSync(nativePath, "utf-8");
+            if (!content.includes("@rollup/wasm-node/dist/native.js")) {
+              content = content.replace(
+                "const requireWithFriendlyError = id => {\n\ttry {\n\t\treturn require(id);\n\t} catch (error) {",
+                "const requireWithFriendlyError = id => {\n\ttry {\n\t\treturn require(id);\n\t} catch (error) {\n\t\ttry { return require(\"@rollup/wasm-node/dist/native.js\"); } catch {}"
+              );
+              fs.writeFileSync(nativePath, content, "utf-8");
+              console.log("Patched rollup for cross-platform WASM fallback.");
+            }
+          }
+          EOF
+
+          cat > tailwind.config.js <<'EOF'
+          /** @type {import("tailwindcss").Config} */
+          export default {
+            content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+            darkMode: "class",
+            theme: {
+              extend: {
+                colors: {
+                  background: { DEFAULT: "var(--color-bg-primary)", primary: "var(--color-bg-primary)", secondary: "var(--color-bg-secondary)", tertiary: "var(--color-bg-tertiary)", canvas: "var(--color-bg-canvas)" },
+                  surface: { DEFAULT: "var(--color-surface)", subtle: "var(--color-surface-subtle)", elevated: "var(--color-surface-elevated)", media: "var(--color-surface-media)", technical: "var(--color-surface-technical)" },
+                  border: { DEFAULT: "var(--color-border-default)", subtle: "var(--color-border-subtle)", strong: "var(--color-border-strong)", accent: "var(--color-border-accent)" },
+                  primary: { DEFAULT: "var(--color-text-primary)", muted: "var(--color-text-secondary)", faint: "var(--color-text-muted)" },
+                  text: { primary: "var(--color-text-primary)", secondary: "var(--color-text-secondary)", muted: "var(--color-text-muted)", tertiary: "var(--color-text-tertiary)", inverse: "var(--color-text-inverse)" },
+                  brand: { ar: "var(--color-brand-ar)", reciclobike: "var(--color-brand-reciclobike)", verdis: "var(--color-brand-verdis)", replasticando: "var(--color-brand-replasticando)", muta: "var(--color-brand-muta)", katche: "var(--color-brand-katche)", vira: "var(--color-brand-vira)" }
+                },
+                fontFamily: { sans: ["var(--font-sans)", "sans-serif"], display: ["var(--font-display)", "sans-serif"], mono: ["var(--font-mono)", "monospace"] },
+                letterSpacing: { monumental: "var(--tracking-monumental)", tight: "var(--tracking-tight)", normal: "var(--tracking-normal)", wide: "var(--tracking-wide)", wider: "var(--tracking-wider)" },
+                maxWidth: { container: "var(--container-max-width)", reading: "var(--container-reading-width)" },
+                spacing: { "section-sm": "var(--section-space-sm)", "section-md": "var(--section-space-md)", "section-lg": "var(--section-space-lg)", "section-hero": "var(--section-space-hero)" },
+                transitionTimingFunction: { expo: "var(--ease-expo)", sharp: "var(--ease-sharp)" },
+                transitionDuration: { micro: "var(--duration-micro)", fast: "var(--duration-fast)", reveal: "var(--duration-reveal)", connection: "var(--duration-connection)", transform: "var(--duration-transform)" }
+              }
+            },
+            plugins: []
+          };
+          EOF
+
+          cat > public/favicon.svg <<'EOF'
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#0a0a0a"/><text x="32" y="40" text-anchor="middle" font-family="Arial,sans-serif" font-size="24" font-weight="700" fill="#f7f6f2">AR</text></svg>
+          EOF
+
+          cat > public/robots.txt <<'EOF'
+          User-agent: *
+          Disallow: /ar/__design-system
+          Allow: /
+
+          Sitemap: https://armidiasintegradas.github.io/ar/sitemap.xml
+          EOF
+
+          cat > public/sitemap.xml <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+            <url><loc>https://armidiasintegradas.github.io/ar/</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/ecosystem</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/ecosystem/reciclobike</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/ecosystem/verdis</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/ecosystem/replasticando</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/ecosystem/muta</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/ecosystem/katche</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/ecosystem/vira</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/projects</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/projects/planes-os</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/projects/capibaribe</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/capabilities</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/about</loc></url>
+            <url><loc>https://armidiasintegradas.github.io/ar/contact</loc></url>
+          </urlset>
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          seo = Path("src/lib/seo.ts")
+          text = seo.read_text()
+          text = text.replace(
+              'const SITE_ORIGIN = "https://armidiasintegradas.com.br";',
+              'const SITE_ORIGIN = import.meta.env.VITE_SITE_ORIGIN || "https://armidiasintegradas.com.br";'
+          )
+          seo.write_text(text)
+
+          index = Path("index.html")
+          text = index.read_text()
+          text = text.replace('content="https://armidiasintegradas.com.br/"', 'content="https://armidiasintegradas.github.io/ar/"')
+          text = text.replace('href="/favicon.svg"', 'href="%BASE_URL%favicon.svg"')
+          index.write_text(text)
+          PY
+
+      - name: Persist expanded source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: expand final AR site source"
+            git push || echo "Source persistence push skipped; continuing deployment."
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build for GitHub Pages
+        env:
+          VITE_BASE_PATH: /ar/
+          VITE_SITE_ORIGIN: https://armidiasintegradas.github.io
+        run: npm run build
+
+      - name: Add SPA fallback
+        run: cp dist/index.html dist/404.html
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
